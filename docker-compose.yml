@@ -1,17 +1,27 @@
+networks:
+  sea:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
 services:
   undercover:
     container_name: bonny
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        DOCKER_SUBNET: "172.17.0.0/16"
-        ROUTER_SUBNET: "192.168.178.0/24"
-        DNS_ADDRESSES: "162.252.172.57,149.154.159.92"
-        VPN_ENDPOINT: "185.188.61.42"
-        VPN_PORT: "51820"
+    environment:
+      DOCKER_SUBNET: ""
+      INTERNAL_VPN_ADDRESS: ""
+      VPN_PRIVATE_KEY: ""
+      VPN_DNS: ""
+      VPN_PUBLIC_KEY: ""
+      VPN_ENDPOINT: ""
+      VPN_PORT: ""
+      MONGODB_ENDPOINT: ""
     volumes:
-      - ./:/home/runner/app
+      - ./server:/home/runner/server
     ports:
       - 8000:8000
     user: 1000:1000
@@ -23,3 +33,16 @@ services:
       - net.ipv6.conf.lo.disable_ipv6=1
       - net.ipv6.conf.eth0.disable_ipv6=1
     privileged: true
+    depends_on:
+      - database
+    networks:
+      sea:
+        ipv4_address: 172.21.0.3
+  database:
+    container_name: bonny_db
+    image: mongo:latest
+    volumes:
+      - ./mongo:/data/db
+    networks:
+      sea:
+        ipv4_address: 172.21.0.2

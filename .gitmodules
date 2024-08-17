@@ -1,0 +1,3 @@
+[submodule "torrents-api"]
+	path = torrents-api
+	url = git@github.com:joybiswas007/torrents-api.git
