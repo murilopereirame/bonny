@@ -2,15 +2,116 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\Request;
+
+trait EnumToArray
+{
+
+    public static function names(): array
+    {
+        return array_column(self::cases(), 'name');
+    }
+
+    public static function values(): array
+    {
+        return array_column(self::cases(), 'value');
+    }
+
+    public static function array(): array
+    {
+        return array_combine(self::values(), self::names());
+    }
+
+}
+
+enum Providers: string {
+    use EnumToArray;
+    case ONE337X = '1337x';
+    case BITSEARCH = 'bitsearch';
+    case TORLOCK = 'torlock';
+    case KNABEN = 'knaben';
+    case TGX = 'torrentgalaxy';
+    case MAGNETDL = 'magnetdl';
+    case TPB = 'thepiratebay';
+    case GLO = 'glotorrents';
+    case LIME = 'limetorrents';
+    case PIRATEIRO = 'pirateiro';
+    case NYAA = 'nyaa';
+    case ANIDEX = 'anidex';
+    case TOSHO = 'animetosho';
+    case TORRENTZ2 = 'torrentz2';
+    case GK = 'gktorrent';
+    case RUTOR = 'rutor';
+    case YTS = 'yts';
+}
 
 Route::get('/ip', function () {
     $response = Http::get('https://api.ipify.org/?format=json')->json();
     return response()->json($response);
 });
 
-Route::get('/yts', function(\Illuminate\Http\Request $request) {
+Route::get('/torrent', function(Request $request) {
     $query = $request->get("query");
-    $page = $request->get("page") ?? 1;
+    $page = $request->get("page");
+
+    $allowed_page_navigation = [
+        Providers::ONE337X->value,
+        Providers::BITSEARCH->value,
+        Providers::KNABEN->value,
+        Providers::RUTOR->value,
+        Providers::LIME->value,
+        Providers::NYAA->value,
+        Providers::YTS->value
+    ];
+
+    $providers = $request->get("providers") ?? Providers::values();
+    $torrents = [];
+
+    foreach ($providers as $provider) {
+        $pg = 1;
+        if (array_search($provider, $allowed_page_navigation)) {
+            $pg = $page;
+        }
+
+        $movies = [];
+
+        if ($page > 1 && $pg === 1) {
+            continue;
+        }
+
+        if ($provider === Providers::YTS->value) {
+            try {
+                $movies = search_yts($query, $pg);
+            } catch (Exception $e) {
+                \Log::error(
+                    "Failed to retrieve torrents for $provider and $query - page $pg".$e->getMessage(),
+                    ["stack" => $e->getTrace()]
+                );
+            }
+        } else {
+            try {
+                $movies = retrieve_torrents($provider, $query, $pg);
+            } catch (Exception $e) {
+                \Log::error(
+                    "Failed to retrieve torrents for $provider and $query - page $pg".$e->getMessage(),
+                    ["stack" => $e->getTrace()]
+                );
+            }
+        }
+
+        $torrents = [
+            ...$torrents,
+            ...$movies
+        ];
+    }
+
+    return response()->json([
+        "status" => "SUCCESS",
+        "torrents" => $torrents
+    ]);
+});
+
+function search_yts(string $query, string $page) {
     $response = Http::get("https://yts.mx/api/v2/list_movies.json?query_term=$query&page=$page")->json();
 
     if (!isset($response["data"]) || !isset($response["data"]["movies"])) {
@@ -25,17 +126,47 @@ Route::get('/yts', function(\Illuminate\Http\Request $request) {
             $movie_list[] = [
                 "title" => "$title " . $torrent["quality"],
                 "hash" => $torrent["hash"],
-                "url" => $torrent["url"],
-                "magnet" => build_magnet($torrent["hash"], $title)
+                "magnet" => build_magnet($torrent["hash"], $title),
+                "size" => $torrent["size"],
             ];
         }
     }
 
-    return response()->json([
-        "status" => "SUCCESS",
-        "torrents" => $movie_list
-    ]);
-});
+    return $movie_list;
+}
+
+function retrieve_torrents(string $provider, string $query, string $page) {
+    $response = Http::post("http://127.0.0.1:35000/torrents/api/v1/$provider", [
+        "search" => $query,
+        "page" => $page
+    ])->json();
+
+    if ($response["statusCode"] != 200) {
+        return [];
+    }
+
+    $torrent_list = [];
+    foreach ($response["torrents"] as $torrent) {
+        $title = $torrent["Name"];
+        $hash = "";
+        $magnet = $torrent["Magnet"];
+        $pattern = '/magnet:\?xt=urn:btih:([a-fA-F0-9]+)/';
+        $size = $torrent["Size"];
+
+        if (preg_match($pattern, $magnet, $matches)) {
+            $hash = $matches[1];
+        }
+
+        $torrent_list[] = [
+            "title" => $title,
+            "hash" => $hash,
+            "magnet" => $magnet,
+            "size" => $size
+        ];
+    }
+
+    return $torrent_list;
+}
 
 function build_magnet(string $hash, string $name): string
 {
